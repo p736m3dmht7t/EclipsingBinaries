@@ -138,7 +138,7 @@ def _compute_tmag_limit(apass_vmag) -> float | None:
     if v_series.empty:
         return None
 
-    return float(v_series.max() + 2.0)
+    return float(v_series.max() + 1.0)
 
 
 # --- _query_single_tic_region ---

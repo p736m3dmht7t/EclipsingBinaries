@@ -24,7 +24,7 @@ import warnings
 from PyAstronomy import pyasl
 
 from .gaia import tess_mag as ga
-from .vseq_updated import isNaN, conversion, splitter
+from .vseq_updated import isNaN, conversion
 
 # turn off this warning that just tells the user,
 # "The warning raised when the contents of the FITS header have been modified to be standards compliant."
@@ -169,8 +169,8 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
                 e_Rc.append(format(root, ".3f"))
             count += 1
 
-        ra_decimal = np.array(splitter(ra))
-        dec_decimal = np.array(splitter(dec))
+        ra_decimal = np.array([_to_decimal_coord(value) for value in ra], dtype=float)
+        dec_decimal = np.array([_to_decimal_coord(value) for value in dec], dtype=float)
         log("Starting VizieR Search for TESS Magnitudes")
         log("Tmag is from the TESS Input Catalog (TIC v8.2). Please go to the GitHub page for more information.")
         T_list, T_err_list = ga(ra_decimal, dec_decimal, write_callback, cancel_event, apass_vmag=V)
@@ -375,8 +375,8 @@ def catalog_finder(ra, dec, pipeline, folder_path, obj_name, write_callback, can
             log("Task canceled.")
             return
 
-        ra_input = splitter([ra])
-        dec_input = splitter([dec])
+        ra_input = [_to_decimal_coord(ra)]
+        dec_input = [_to_decimal_coord(dec)]
 
         result = query_vizier(ra_input[0], dec_input[0], write_callback, cancel_event)
         log("Processing data from the Vizier catalog.")
@@ -530,8 +530,8 @@ def create_lines(ra_list, dec_list, mag_list, ra, dec, filt):
     :return: The data lines string for the RADEC file
     """
     lines = ""
-    ra_decimal = np.array(splitter(ra_list))
-    dec_decimal = np.array(splitter(dec_list))
+    ra_decimal = np.array([_to_decimal_coord(value) for value in ra_list], dtype=float)
+    dec_decimal = np.array([_to_decimal_coord(value) for value in dec_list], dtype=float)
 
     for count, val in enumerate(ra_list):
         next_ra = float(ra_decimal[count])
@@ -664,8 +664,8 @@ def overlay(df, tar_ra, tar_dec, fits_file):
     dec_catalog = list(df[2])
 
     # convert the lists to degrees for plotting purposes
-    ra_cat_new = (np.array(splitter(ra_catalog)) * 15) * u.deg
-    dec_cat_new = np.array(splitter(dec_catalog)) * u.deg
+    ra_cat_new = (np.array([_to_decimal_coord(value) for value in ra_catalog], dtype=float) * 15) * u.deg
+    dec_cat_new = np.array([_to_decimal_coord(value) for value in dec_catalog], dtype=float) * u.deg
 
     # text for the caption below the graph
     txt = "Number represents index value given in the final output catalog file."
