@@ -164,9 +164,9 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
                 Rc.append(99.999)
                 e_Rc.append(99.999)
             else:
-                # if there is a value then format that value with only 2 decimal places otherwise there will be like 8
-                Rc.append(format(val, ".2f"))
-                e_Rc.append(format(root, ".2f"))
+                # if there is a value then format that value with 3 decimal places for RADEC precision consistency
+                Rc.append(format(val, ".3f"))
+                e_Rc.append(format(root, ".3f"))
             count += 1
 
         ra_decimal = np.array(splitter(ra))
