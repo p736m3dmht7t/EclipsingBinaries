@@ -138,7 +138,7 @@ def _compute_tmag_limit(apass_vmag) -> float | None:
     if v_series.empty:
         return None
 
-    return float(v_series.max() + 1.0)
+    return float(v_series.max() + 2.0)
 
 
 # --- _query_single_tic_region ---
@@ -176,7 +176,7 @@ def _query_single_tic_region(
             try:
                 column_filters = {}
                 if tmag_limit is not None:
-                    column_filters["Tmag"] = f"<{tmag_limit:.2f}"
+                    column_filters["Tmag"] = f"<{tmag_limit:.3f}"
 
                 vizier = Vizier(columns=required_columns, row_limit=-1, column_filters=column_filters)
                 vizier.TIMEOUT = timeout_seconds
@@ -370,7 +370,7 @@ def tess_mag(ra, dec, write_callback, cancel_event, apass_vmag=None):
 
         log("Starting the query for the Vizier catalog.")
         if tmag_limit is not None:
-            log(f"Applying TIC Tmag filter: Tmag < {tmag_limit:.2f}")
+            log(f"Applying TIC Tmag filter: Tmag < {tmag_limit:.3f}")
 
         tic_df = _query_tic_catalog(
             ra_hours,

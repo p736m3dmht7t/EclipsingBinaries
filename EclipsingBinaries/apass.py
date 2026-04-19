@@ -409,23 +409,90 @@ def create_header(ra, dec):
              "#Apparent Magnitude or missing (value = apparent magnitude, or value > 99 or missing = no mag info)\n" \
              "#Add one comma separated line per aperture in the following format:\n"
     header += "#RA, Dec, Ref Star, Centroid, Magnitude\n"
-    header += f"{_format_target_coord(ra)}, {_format_target_coord(dec)}, 0, 1, 99.999\n"
+    header += (
+        f"{_format_target_coord(ra, is_ra=True)}, "
+        f"{_format_target_coord(dec, is_ra=False)}, 0, 1, 99.999\n"
+    )
 
     return header
 
 
 # --- _format_target_coord ---
 # Formats target coordinates while preserving input sexagesimal precision.
-def _format_target_coord(value):
+def _format_target_coord(value, is_ra):
     """
     Formats a target coordinate value for RADEC header output.
 
     :param value: Coordinate value in sexagesimal string or decimal format
+    :param is_ra: True if coordinate is right ascension, False for declination
     :return: Formatted coordinate string
     """
-    if isinstance(value, str) and ":" in value:
-        return value.strip()
-    return str(conversion([value])[0])
+    include_plus = isinstance(value, str) and value.strip().startswith("+")
+    return _format_sexagesimal_coord(value, is_ra=is_ra, include_plus=include_plus)
+
+
+# --- _format_sexagesimal_coord ---
+# Formats coordinates as HH:MM:SS.sss or +/-DD:MM:SS.sss.
+def _format_sexagesimal_coord(value, is_ra, include_plus=False):
+    """
+    Formats coordinate text for RADEC files with fixed-width sexagesimal components.
+
+    :param value: Coordinate value in sexagesimal string or decimal format
+    :param is_ra: True for RA (hours), False for Dec (degrees)
+    :param include_plus: Include '+' sign for positive Dec when True
+    :return: Normalized sexagesimal coordinate string
+    """
+    decimal_value = _to_decimal_coord(value)
+
+    sign = ""
+    if not is_ra:
+        if decimal_value < 0:
+            sign = "-"
+        elif include_plus:
+            sign = "+"
+
+    absolute_value = abs(decimal_value)
+    major = int(absolute_value)
+    minutes_float = (absolute_value - major) * 60.0
+    minutes = int(minutes_float)
+    seconds = round((minutes_float - minutes) * 60.0, 3)
+
+    if seconds >= 60.0:
+        seconds = 0.0
+        minutes += 1
+    if minutes >= 60:
+        minutes = 0
+        major += 1
+
+    return f"{sign}{major:02d}:{minutes:02d}:{seconds:06.3f}"
+
+
+# --- _to_decimal_coord ---
+# Converts coordinate input into decimal hours/degrees.
+def _to_decimal_coord(value):
+    """
+    Converts a coordinate value to decimal representation.
+
+    :param value: Coordinate value in sexagesimal string or decimal format
+    :return: Decimal coordinate value
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        if ":" in stripped:
+            parts = stripped.split(":")
+            if len(parts) != 3:
+                raise ValueError(f"Invalid sexagesimal coordinate: {value}")
+
+            major = float(parts[0])
+            minutes = float(parts[1])
+            seconds = float(parts[2])
+
+            sign = -1.0 if major < 0 else 1.0
+            major_abs = abs(major)
+            decimal_value = major_abs + (minutes / 60.0) + (seconds / 3600.0)
+            return sign * decimal_value
+        return float(stripped)
+    return float(value)
 
 
 def _format_radec_magnitude(value):
@@ -475,7 +542,9 @@ def create_lines(ra_list, dec_list, mag_list, ra, dec, filt):
         angle = angle_dist(float(ra), float(dec), next_ra, next_dec)
         if angle:
             mag_text = _format_radec_magnitude(mag_list[count])
-            lines += str(val) + ", " + str(dec_list[count]) + ", " + "1, 1, " + mag_text + "\n"
+            ra_text = _format_sexagesimal_coord(val, is_ra=True)
+            dec_text = _format_sexagesimal_coord(dec_list[count], is_ra=False)
+            lines += ra_text + ", " + dec_text + ", " + "1, 1, " + mag_text + "\n"
 
     return lines
 
