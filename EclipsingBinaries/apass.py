@@ -171,9 +171,8 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
 
         ra_decimal = np.array(splitter(ra))
         dec_decimal = np.array(splitter(dec))
-        log("Starting Gaia Search for TESS Magnitudes\n")
-        log("The 'T' filter is from the TESS Input Catalog (TIC v8.2). Please go to the GitHub "
-            "page for more information.\n")
+        log("Starting VizieR Search for TESS Magnitudes")
+        log("Tmag is from the TESS Input Catalog (TIC v8.2). Please go to the GitHub page for more information.")
         T_list, T_err_list = ga(ra_decimal, dec_decimal, write_callback, cancel_event, apass_vmag=V)
 
         # puts all columns into a dataframe for output
@@ -554,7 +553,7 @@ def create_radec(
 
             file_list.append(outputfile + ".radec")
 
-        log("Finished writing RADEC files for Johnson B, Johnson V, and Cousins R, and T.\n")
+        log("Finished writing RADEC files for Johnson B, Johnson V, Cousins R, and TESS magnitudes.")
 
         return file_list
     except Exception as e:
