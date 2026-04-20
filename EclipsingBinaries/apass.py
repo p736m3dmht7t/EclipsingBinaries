@@ -3,7 +3,7 @@ Combines all APASS programs that were originally separate on GitHub for an easy 
 
 Author: Kyle Koeller
 Created: 12/26/2022
-Last Updated: 03/11/2026
+Last Updated: 04/19/2026
 """
 
 from astroquery.vizier import Vizier
@@ -31,8 +31,8 @@ from .vseq_updated import isNaN, conversion, splitter, decimal_limit
 warnings.filterwarnings("ignore", category=wcs.FITSFixedWarning)
 
 
-def comparison_selector(ra="", dec="", pipeline=False, folder_path="", obj_name="", science_image="",
-                        write_callback=None, cancel_event=None):
+def comparison_selector(ra: str = "", dec: str = "", pipeline: bool = False, folder_path: str = "",
+                        obj_name: str = "", science_image: str = "", write_callback=None, cancel_event=None):
     """
     This code compares AIJ found stars (given an RA and DEC) to APASS stars to get their respective Johnson B, V, and
     Cousins R values and their respective errors.
@@ -77,7 +77,17 @@ def comparison_selector(ra="", dec="", pipeline=False, folder_path="", obj_name=
         radec_list = create_radec(df, input_ra, input_dec, T_list, pipeline, folder_path, obj_name, write_callback,
                                   cancel_event)
 
-        overlay(df, input_ra, input_dec, science_image)
+        overlay_path = overlay(
+            df,
+            input_ra,
+            input_dec,
+            science_image,
+            folder_path=folder_path,
+            obj_name=obj_name,
+            write_callback=write_callback,
+        )
+        if overlay_path:
+            log(f"Saved overlay image to: {overlay_path}")
 
         log("\nReduction process completed successfully.\n")
 
@@ -480,7 +490,7 @@ def create_radec(df, ra, dec, T_list, pipeline, folder_path, obj_name, write_cal
         raise
 
 
-def overlay(df, tar_ra, tar_dec, fits_file):
+def overlay(df, tar_ra, tar_dec, fits_file, folder_path: str = "", obj_name: str = "", write_callback=None):
     """
     Creates an overlay of a science image with APASS objects numbered as seen in the catalog file that
     was saved previously
@@ -488,25 +498,41 @@ def overlay(df, tar_ra, tar_dec, fits_file):
     :param tar_dec: target declination
     :param tar_ra: target right ascension
     :param df: input catalog DataFrame
-    :return: None but displays a science image with over-layed APASS objects
+    :param folder_path: Directory path to save the overlay image
+    :param obj_name: Object name used to generate the overlay filename
+    :param write_callback: Optional callback to write log messages
+    :return: File path to saved overlay image, or None when no FITS image is available
     """
-    # NSVS_254037-S001-R004-C001-Empty-R-B2.fts
-    # fits_file = input("Enter file pathway to one of your science image files for creating an overlay or "
-    #                   "comparison stars: ")
+    if not fits_file:
+        if write_callback:
+            write_callback("No science image provided. Skipping overlay.")
+        else:
+            print("No science image provided. Skipping overlay.")
+        return
+
+    if not os.path.exists(fits_file):
+        if write_callback:
+            write_callback(f"Science image path does not exist: {fits_file}. Skipping overlay.")
+        else:
+            print(f"Science image path does not exist: {fits_file}. Skipping overlay.")
+        return
 
     # If a directory is given, find the first FITS file within it
     if os.path.isdir(fits_file):
         fits_extensions = ('.fits', '.fts', '.fit', '.FITS', '.FTS', '.FIT')
         candidates = sorted(f for f in os.listdir(fits_file) if f.endswith(fits_extensions))
         if not candidates:
-            print(f"No FITS files found in {fits_file}. Skipping overlay.")
+            if write_callback:
+                write_callback(f"No FITS files found in {fits_file}. Skipping overlay.")
+            else:
+                print(f"No FITS files found in {fits_file}. Skipping overlay.")
             return
         fits_file = os.path.join(fits_file, candidates[0])
 
     # get the image data for plotting purposes
-    header_data_unit_list = fits.open(fits_file)
-    image = header_data_unit_list[0].data
-    header = header_data_unit_list[0].header
+    with fits.open(fits_file) as header_data_unit_list:
+        image = header_data_unit_list[0].data
+        header = header_data_unit_list[0].header
 
     # set variables to lists
     index_num = list(df[0])
@@ -552,7 +578,15 @@ def overlay(df, tar_ra, tar_dec, fits_file):
 
     plt.gca().invert_xaxis()
     plt.legend(bbox_to_anchor=(1.45, 1.01), fancybox=False, shadow=False)
-    plt.show()
+
+    output_dir = folder_path if folder_path else os.path.dirname(os.path.abspath(fits_file))
+    overlay_name = f"{obj_name}_overlay.png" if obj_name else "overlay.png"
+    overlay_path = os.path.join(output_dir, overlay_name)
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(overlay_path, bbox_inches='tight', dpi=256)
+    plt.close(fig)
+
+    return overlay_path
 
 
 @jit(forceobj=True)
