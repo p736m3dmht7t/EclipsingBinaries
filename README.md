@@ -29,6 +29,11 @@ The list of OS’s and Python versions listed below have been tested to be able 
 The minimum working Python version is 3.12 and as of right now no versions lower work with all aspects of this package.
 
 For MacOS HomeBrew users, you will need to be built against TK 8.6 since TK 9.0 breaks drag and drop extension.
+For Ubuntu/Debian users, install the system tkinter package before starting the app:
+
+```
+sudo apt install python3-tk
+```
 
 -----
 
@@ -94,5 +99,6 @@ This will print out all the options that are available to edit and change. The `
 - photutils>=1.8.0
 - tkinterdnd2>=0.4.3
 - tkmacosx>=1.0.4 (macOS only)
+- python3-tk (Ubuntu/Debian system package)
 
 -----
