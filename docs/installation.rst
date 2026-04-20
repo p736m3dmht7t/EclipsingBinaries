@@ -24,6 +24,12 @@ EclipsingBinaries has the following requirements:
 - photutils>=1.8.0
 - tkinterdnd2>=0.4.3
 - tkmacosx>=1.0.4 (macOS only)
+- python3-tk (Ubuntu/Debian system package)
+
+Ubuntu/Debian users should install the tkinter system package before starting
+the app::
+
+    sudo apt install python3-tk
 
 Installing EclipsingBinaries
 ============================
