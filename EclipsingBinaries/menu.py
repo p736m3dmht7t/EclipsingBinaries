@@ -806,19 +806,19 @@ class ProgramLauncher(TkinterDnD.Tk):
                                                r"C:\folder1\B.radec", row=3,
                                                validation_func=lambda x: len(x.strip()) > 0,
                                                error_message="Please enter a file pathway with file name",
-                                               browse_type="folder")
+                                               browse_type="file")
 
         radec_v_file = self.create_input_field(self.right_frame, "RADEC File (V Filter):",
                                                r"C:\folder1\V.radec", row=4,
                                                validation_func=lambda x: len(x.strip()) > 0,
                                                error_message="Please enter a file pathway with file name.",
-                                               browse_type="folder")
+                                               browse_type="file")
 
         radec_r_file = self.create_input_field(self.right_frame, "RADEC File (R Filter):",
                                                r"C:\folder1\R.radec", row=5,
                                                validation_func=lambda x: len(x.strip()) > 0,
                                                error_message="Please enter a file pathway with file name.",
-                                               browse_type="folder")
+                                               browse_type="file")
 
         # Run button
         self.create_run_button(self.right_frame, self.run_multi_aperture_photometry, row=6,

@@ -51,8 +51,13 @@ def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=N
     cancel_event : threading.Event
         Event flag that allows external cancellation of the running task.
     """
-    # Filters expected in the image collection, matched positionally with radec_list
-    filt_list = ["Empty/B", "Empty/V", "Empty/R"]
+    # Candidate filter names per band: "Empty/X" (BSUO/MaxIm native) tried first,
+    # plain "X" as fallback for images calibrated by other pipelines.
+    filt_candidates = [
+        ("Empty/B", "B"),
+        ("Empty/V", "V"),
+        ("Empty/R", "R"),
+    ]
 
     def log(message):
         if write_callback:
@@ -64,13 +69,20 @@ def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=N
         images_path = Path(path)
         files = ccdp.ImageFileCollection(images_path)
 
-        for filt, radec_file in zip(filt_list, radec_list):
+        for (filt_primary, filt_alt), radec_file in zip(filt_candidates, radec_list):
             # Respect cancellation between filters so the task exits cleanly
             if cancel_event and cancel_event.is_set():
                 log("Multi-Aperture Photometry was canceled.")
                 return
 
-            image_list = files.files_filtered(imagetyp='LIGHT', filter=filt)
+            image_list = list(files.files_filtered(imagetyp='LIGHT', filter=filt_primary))
+            filt = filt_primary
+            if not image_list:
+                alt_list = list(files.files_filtered(imagetyp='LIGHT', filter=filt_alt))
+                if alt_list:
+                    image_list = alt_list
+                    filt = filt_alt
+
             log(f"Processing {len(image_list)} images for {filt} filter.")
 
             multiple_AP(
@@ -400,8 +412,8 @@ def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file=
         ax.legend(loc="upper right", fontsize=fontsize).set_draggable(True)
         ax.tick_params(axis='both', which='major', labelsize=fontsize)
 
-        filter_letter = filt.split("/")
-        plt.savefig(path / f"{obj_name}_{filter_letter[1]}_figure.jpg")
+        filter_letter = filt.split("/")[-1]
+        plt.savefig(path / f"{obj_name}_{filter_letter}_figure.jpg")
         plt.close()
 
         # ---------------------------------------------------------------------------
@@ -414,7 +426,7 @@ def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file=
             'Source_AMag_T1_Error': mag_err
         })
 
-        output_file = path / f"{obj_name}_{filter_letter[1]}_data.csv"
+        output_file = path / f"{obj_name}_{filter_letter}_data.csv"
         light_curve_data.to_csv(output_file, index=False)
         log(f"Saved light curve data for {filt} to {output_file}")
 
