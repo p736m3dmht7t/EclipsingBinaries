@@ -24,7 +24,7 @@ import warnings
 from PyAstronomy import pyasl
 
 from .gaia import tess_mag as ga
-from .vseq_updated import isNaN, conversion, splitter, decimal_limit
+from .vseq_updated import isNaN, conversion
 
 # turn off this warning that just tells the user,
 # "The warning raised when the contents of the FITS header have been modified to be standards compliant."
@@ -65,8 +65,9 @@ def comparison_selector(ra: str = "", dec: str = "", pipeline: bool = False, fol
             return
 
         log("Starting the process for finding APASS stars.")
-        apass_file, input_ra, input_dec, T_list = cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback,
-                                                            cancel_event)
+        apass_file, input_ra, input_dec, input_ra_text, input_dec_text, T_list = cousins_r(
+            ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_event
+        )
         df = pd.read_csv(apass_file, header=None, skiprows=[0], sep="\t")
 
         log("Finished Saving")
@@ -74,8 +75,19 @@ def comparison_selector(ra: str = "", dec: str = "", pipeline: bool = False, fol
         #     "The output file you have entered has RA and DEC for stars and their B, V, Cousins R, and TESS T magnitudes "
         #     "with their respective errors.\n")
 
-        radec_list = create_radec(df, input_ra, input_dec, T_list, pipeline, folder_path, obj_name, write_callback,
-                                  cancel_event)
+        radec_list = create_radec(
+            df,
+            input_ra,
+            input_dec,
+            T_list,
+            pipeline,
+            folder_path,
+            obj_name,
+            write_callback,
+            cancel_event,
+            target_ra_text=input_ra_text,
+            target_dec_text=input_dec_text
+        )
 
         overlay_path = overlay(
             df,
@@ -131,8 +143,9 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
         e_beta = 0.03
         gamma = 0.219
 
-        input_file, input_ra, input_dec = catalog_finder(ra, dec, pipeline, folder_path, obj_name, write_callback,
-                                                         cancel_event)
+        input_file, input_ra, input_dec, input_ra_text, input_dec_text = catalog_finder(
+            ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_event
+        )
         df = pd.read_csv(input_file, header=None, skiprows=[0], sep=",")
 
         # writes the columns from the input file
@@ -161,15 +174,16 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
                 Rc.append(99.999)
                 e_Rc.append(99.999)
             else:
-                # if there is a value then format that value with only 2 decimal places otherwise there will be like 8
-                Rc.append(format(val, ".2f"))
-                e_Rc.append(format(root, ".2f"))
+                # if there is a value then format that value with 3 decimal places for RADEC precision consistency
+                Rc.append(format(val, ".3f"))
+                e_Rc.append(format(root, ".3f"))
             count += 1
 
-        ra_decimal = np.array(splitter(ra))
-        dec_decimal = np.array(splitter(dec))
-        log("Starting Gaia Search for TESS Magnitudes\n")
-        T_list, T_err_list = ga(ra_decimal, dec_decimal, write_callback, cancel_event)
+        ra_decimal = np.array([_to_decimal_coord(value) for value in ra], dtype=float)
+        dec_decimal = np.array([_to_decimal_coord(value) for value in dec], dtype=float)
+        log("Starting VizieR Search for TESS Magnitudes")
+        log("Tmag is from the TESS Input Catalog (TIC v8.2). Please go to the GitHub page for more information.")
+        T_list, T_err_list = ga(ra_decimal, dec_decimal, write_callback, cancel_event, apass_vmag=V)
 
         # puts all columns into a dataframe for output
         final = pd.DataFrame({
@@ -191,7 +205,7 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
         final.to_csv(output_file, index=True, sep="\t")
         log("Completed Cousins R calculations.")
 
-        return output_file, input_ra, input_dec, T_list
+        return output_file, input_ra, input_dec, input_ra_text, input_dec_text, T_list
     except Exception as e:
         log(f"An error occurred: {e}")
         raise
@@ -288,14 +302,14 @@ def process_data(vizier_result):
     # converts all list values to numbers and RA/Dec coordinates and magnitudes to numbers with limited decimal places
     ra_final = conversion(ra_new)
     dec_new = conversion(dec)
-    bmag_new = decimal_limit(bmag)
-    e_bmag_new = decimal_limit(e_bmag)
-    vmag_new = decimal_limit(vmag)
-    e_vmag_new = decimal_limit(e_vmag)
-    gmag_new = decimal_limit(gmag)
-    e_gmag_new = decimal_limit(e_gmag)
-    rmag_new = decimal_limit(rmag)
-    e_rmag_new = decimal_limit(e_rmag)
+    bmag_new = _format_decimal_list(bmag, 3)
+    e_bmag_new = _format_decimal_list(e_bmag, 3)
+    vmag_new = _format_decimal_list(vmag, 3)
+    e_vmag_new = _format_decimal_list(e_vmag, 3)
+    gmag_new = _format_decimal_list(gmag, 3)
+    e_gmag_new = _format_decimal_list(e_gmag, 3)
+    rmag_new = _format_decimal_list(rmag, 3)
+    e_rmag_new = _format_decimal_list(e_rmag, 3)
 
     # places all lists into a DataFrame to paste into a text file for comparison star finder
     df = pd.DataFrame({
@@ -312,6 +326,24 @@ def process_data(vizier_result):
     })
 
     return df
+
+
+def _format_decimal_list(values, places):
+    """
+    Formats numeric values as strings with a fixed number of decimal places.
+
+    :param values: Sequence of numeric values
+    :param places: Number of decimal places to preserve
+    :return: List of formatted numeric strings
+    """
+    formatted_values = []
+    for value in values:
+        try:
+            numeric_value = float(value)
+            formatted_values.append(format(numeric_value, f".{places}f"))
+        except (TypeError, ValueError):
+            formatted_values.append("nan")
+    return formatted_values
 
 
 def save_to_file(df, filepath):
@@ -353,8 +385,8 @@ def catalog_finder(ra, dec, pipeline, folder_path, obj_name, write_callback, can
             log("Task canceled.")
             return
 
-        ra_input = splitter([ra])
-        dec_input = splitter([dec])
+        ra_input = [_to_decimal_coord(ra)]
+        dec_input = [_to_decimal_coord(dec)]
 
         result = query_vizier(ra_input[0], dec_input[0], write_callback, cancel_event)
         log("Processing data from the Vizier catalog.")
@@ -365,7 +397,7 @@ def catalog_finder(ra, dec, pipeline, folder_path, obj_name, write_callback, can
         save_to_file(df, text_file)
 
         log("Finished cataloging the Vizier results.")
-        return text_file, ra_input[0], dec_input[0]
+        return text_file, ra_input[0], dec_input[0], ra, dec
     except Exception as e:
         log(f"An error occurred: {e}")
         raise
@@ -387,9 +419,111 @@ def create_header(ra, dec):
              "#Apparent Magnitude or missing (value = apparent magnitude, or value > 99 or missing = no mag info)\n" \
              "#Add one comma separated line per aperture in the following format:\n"
     header += "#RA, Dec, Ref Star, Centroid, Magnitude\n"
-    header += str(conversion([ra])[0]) + ", " + str(conversion([dec])[0]) + ", 0, 1, 99.999\n"
+    header += (
+        f"{_format_target_coord(ra, is_ra=True)}, "
+        f"{_format_target_coord(dec, is_ra=False)}, 0, 1, 99.999\n"
+    )
 
     return header
+
+
+# --- _format_target_coord ---
+# Formats target coordinates while preserving input sexagesimal precision.
+def _format_target_coord(value, is_ra):
+    """
+    Formats a target coordinate value for RADEC header output.
+
+    :param value: Coordinate value in sexagesimal string or decimal format
+    :param is_ra: True if coordinate is right ascension, False for declination
+    :return: Formatted coordinate string
+    """
+    include_plus = isinstance(value, str) and value.strip().startswith("+")
+    return _format_sexagesimal_coord(value, is_ra=is_ra, include_plus=include_plus)
+
+
+# --- _format_sexagesimal_coord ---
+# Formats coordinates as HH:MM:SS.sss or +/-DD:MM:SS.sss.
+def _format_sexagesimal_coord(value, is_ra, include_plus=False):
+    """
+    Formats coordinate text for RADEC files with fixed-width sexagesimal components.
+
+    :param value: Coordinate value in sexagesimal string or decimal format
+    :param is_ra: True for RA (hours), False for Dec (degrees)
+    :param include_plus: Include '+' sign for positive Dec when True
+    :return: Normalized sexagesimal coordinate string
+    """
+    decimal_value = _to_decimal_coord(value)
+
+    sign = ""
+    if not is_ra:
+        if decimal_value < 0:
+            sign = "-"
+        elif include_plus:
+            sign = "+"
+
+    absolute_value = abs(decimal_value)
+    major = int(absolute_value)
+    minutes_float = (absolute_value - major) * 60.0
+    minutes = int(minutes_float)
+    seconds = round((minutes_float - minutes) * 60.0, 3)
+
+    if seconds >= 60.0:
+        seconds = 0.0
+        minutes += 1
+    if minutes >= 60:
+        minutes = 0
+        major += 1
+
+    return f"{sign}{major:02d}:{minutes:02d}:{seconds:06.3f}"
+
+
+# --- _to_decimal_coord ---
+# Converts coordinate input into decimal hours/degrees.
+def _to_decimal_coord(value):
+    """
+    Converts a coordinate value to decimal representation.
+
+    :param value: Coordinate value in sexagesimal string or decimal format
+    :return: Decimal coordinate value
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        if ":" in stripped:
+            parts = stripped.split(":")
+            if len(parts) != 3:
+                raise ValueError(f"Invalid sexagesimal coordinate: {value}")
+
+            major = float(parts[0])
+            minutes = float(parts[1])
+            seconds = float(parts[2])
+
+            sign = -1.0 if major < 0 else 1.0
+            major_abs = abs(major)
+            decimal_value = major_abs + (minutes / 60.0) + (seconds / 3600.0)
+            return sign * decimal_value
+        return float(stripped)
+    return float(value)
+
+
+def _format_radec_magnitude(value):
+    """
+    Formats magnitude values for RADEC file output with consistent precision.
+
+    :param value: Magnitude value
+    :return: Formatted magnitude string
+    """
+    if isNaN(value):
+        return "99.999"
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return "99.999"
+
+    if numeric_value >= 99:
+        return "99.999"
+
+    return format(numeric_value, ".3f")
 
 
 def create_lines(ra_list, dec_list, mag_list, ra, dec, filt):
@@ -406,8 +540,8 @@ def create_lines(ra_list, dec_list, mag_list, ra, dec, filt):
     :return: The data lines string for the RADEC file
     """
     lines = ""
-    ra_decimal = np.array(splitter(ra_list))
-    dec_decimal = np.array(splitter(dec_list))
+    ra_decimal = np.array([_to_decimal_coord(value) for value in ra_list], dtype=float)
+    dec_decimal = np.array([_to_decimal_coord(value) for value in dec_list], dtype=float)
 
     for count, val in enumerate(ra_list):
         next_ra = float(ra_decimal[count])
@@ -417,12 +551,27 @@ def create_lines(ra_list, dec_list, mag_list, ra, dec, filt):
         # duplication
         angle = angle_dist(float(ra), float(dec), next_ra, next_dec)
         if angle:
-            lines += str(val) + ", " + str(dec_list[count]) + ", " + "1, 1, " + str(mag_list[count]) + "\n"
+            mag_text = _format_radec_magnitude(mag_list[count])
+            ra_text = _format_sexagesimal_coord(val, is_ra=True)
+            dec_text = _format_sexagesimal_coord(dec_list[count], is_ra=False)
+            lines += ra_text + ", " + dec_text + ", " + "1, 1, " + mag_text + "\n"
 
     return lines
 
 
-def create_radec(df, ra, dec, T_list, pipeline, folder_path, obj_name, write_callback, cancel_event):
+def create_radec(
+    df,
+    ra,
+    dec,
+    T_list,
+    pipeline,
+    folder_path,
+    obj_name,
+    write_callback,
+    cancel_event,
+    target_ra_text=None,
+    target_dec_text=None
+):
     """
     Creates a RADEC file for all 3 filters (Johnson B, V, Cousins R, and T)
 
@@ -436,6 +585,8 @@ def create_radec(df, ra, dec, T_list, pipeline, folder_path, obj_name, write_cal
     :param write_callback: Function to write log messages to the GUI
     :param cancel_event:
 
+    :param target_ra_text: Optional original RA input string for header output
+    :param target_dec_text: Optional original DEC input string for header output
     :return: None but saves the RADEC files to user specified locations
     """
 
@@ -456,10 +607,9 @@ def create_radec(df, ra, dec, T_list, pipeline, folder_path, obj_name, write_cal
         ra_list = df[1]
         dec_list = df[2]
 
-        header = create_header(ra, dec)
-
-        log("The 'T' filter is the calibrated TESS magnitudes calculated from Gaia magnitudes. Please go to the GitHub "
-            "page for more information.\n")
+        header_ra = target_ra_text if target_ra_text is not None else ra
+        header_dec = target_dec_text if target_dec_text is not None else dec
+        header = create_header(header_ra, header_dec)
 
         # to write lines to the file in order create new RADEC files for each filter
         file_list = []
@@ -482,7 +632,7 @@ def create_radec(df, ra, dec, T_list, pipeline, folder_path, obj_name, write_cal
 
             file_list.append(outputfile + ".radec")
 
-        log("Finished writing RADEC files for Johnson B, Johnson V, and Cousins R, and T.\n")
+        log("Finished writing RADEC files for Johnson B, Johnson V, Cousins R, and TESS magnitudes.")
 
         return file_list
     except Exception as e:
@@ -540,8 +690,8 @@ def overlay(df, tar_ra, tar_dec, fits_file, folder_path: str = "", obj_name: str
     dec_catalog = list(df[2])
 
     # convert the lists to degrees for plotting purposes
-    ra_cat_new = (np.array(splitter(ra_catalog)) * 15) * u.deg
-    dec_cat_new = np.array(splitter(dec_catalog)) * u.deg
+    ra_cat_new = (np.array([_to_decimal_coord(value) for value in ra_catalog], dtype=float) * 15) * u.deg
+    dec_cat_new = np.array([_to_decimal_coord(value) for value in dec_catalog], dtype=float) * u.deg
 
     # text for the caption below the graph
     txt = "Number represents index value given in the final output catalog file."
