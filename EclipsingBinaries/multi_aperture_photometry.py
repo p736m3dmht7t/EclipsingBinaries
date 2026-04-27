@@ -3,7 +3,7 @@ Analyze images using aperture photometry within Python and not with Astro ImageJ
 
 Author: Kyle Koeller
 Created: 05/07/2023
-Last Updated: 04/19/2026
+Last Updated: 04/27/2026
 """
 
 # Python imports
@@ -30,6 +30,77 @@ warnings.filterwarnings("ignore", category=wcs.FITSFixedWarning)
 # Use non-interactive backend so plots can be saved without a display
 matplotlib.use('Agg')
 
+import json
+
+
+_config_loaded_attempted = False
+_loaded_config = None
+_config_path_used = None
+_config_log_printed = False
+
+def load_filter_config(radec_dir):
+    global _loaded_config, _config_path_used, _config_loaded_attempted
+    if _config_loaded_attempted:
+        return _loaded_config, _config_path_used
+    
+    _config_loaded_attempted = True
+    
+    paths_to_check = []
+    if radec_dir:
+        paths_to_check.append(Path(radec_dir) / "filter_config.json")
+    paths_to_check.append(Path.cwd() / "filter_config.json")
+    paths_to_check.append(Path.home() / ".EclipsingBinaries" / "filter_config.json")
+    
+    for p in paths_to_check:
+        if p.exists():
+            try:
+                with open(p, "r") as f:
+                    _loaded_config = json.load(f)
+                _config_path_used = str(p)
+                return _loaded_config, _config_path_used
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                continue
+    return None, None
+
+def resolve_filter(header, radec_dir=None, log=print):
+    global _config_log_printed
+    filt_candidates = {
+        "Empty/B": "B", "B": "B",
+        "Empty/V": "V", "V": "V",
+        "Empty/R": "R", "R": "R",
+    }
+    
+    filter_val = None
+    if "FILTER" in header:
+        filter_val = header["FILTER"]
+    elif "FILTERS" in header:
+        filter_val = header["FILTERS"]
+        
+    if filter_val in filt_candidates:
+        return filt_candidates[filter_val]
+        
+    config, config_path = load_filter_config(radec_dir)
+    if not config:
+        return filter_val
+        
+    if not _config_log_printed:
+        log(f"Using filter configuration from {config_path}")
+        _config_log_printed = True
+        
+    for telescope in config.get("TELESCOPE", []):
+        ident = telescope.get("identification", {})
+        fits_key = ident.get("fits_key")
+        match_value = ident.get("match_value")
+        
+        if fits_key in header and header[fits_key] == match_value:
+            for filt in telescope.get("filters", []):
+                f_key = filt.get("fits_key")
+                f_match = filt.get("match_value")
+                
+                if f_key in header and header[f_key] == f_match:
+                    return filt.get("processing_symbol")
+                    
+    return filter_val
 
 def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=None, cancel_event=None):
     """
@@ -51,13 +122,10 @@ def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=N
     cancel_event : threading.Event
         Event flag that allows external cancellation of the running task.
     """
-    # Candidate filter names per band: "Empty/X" (BSUO/MaxIm native) tried first,
-    # plain "X" as fallback for images calibrated by other pipelines.
-    filt_candidates = [
-        ("Empty/B", "B"),
-        ("Empty/V", "V"),
-        ("Empty/R", "R"),
-    ]
+    global _config_loaded_attempted, _config_log_printed, _loaded_config
+    _config_loaded_attempted = False
+    _config_log_printed = False
+    _loaded_config = None
 
     def log(message):
         if write_callback:
@@ -68,27 +136,40 @@ def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=N
     try:
         images_path = Path(path)
         files = ccdp.ImageFileCollection(images_path)
+        
+        valid_radec = [r for r in radec_list if r and Path(r).exists()] if radec_list else []
+        radec_dir = Path(valid_radec[0]).parent if valid_radec else None
 
-        for (filt_primary, filt_alt), radec_file in zip(filt_candidates, radec_list):
-            # Respect cancellation between filters so the task exits cleanly
+        # Group LIGHT images by resolved filter symbol
+        grouped_images = {}
+        for header, file_name in files.headers(imagetyp='LIGHT', return_fname=True):
+            sym = resolve_filter(header, radec_dir=radec_dir, log=log)
+            if sym is not None:
+                grouped_images.setdefault(sym, []).append(file_name)
+                
+        # To maintain compatibility with existing radec_list order (B, V, R)
+        expected_symbols = ["B", "V", "R"]
+        
+        for idx, sym in enumerate(expected_symbols):
             if cancel_event and cancel_event.is_set():
                 log("Multi-Aperture Photometry was canceled.")
                 return
-
-            image_list = list(files.files_filtered(imagetyp='LIGHT', filter=filt_primary))
-            filt = filt_primary
+                
+            if radec_list and idx < len(radec_list):
+                radec_file = radec_list[idx]
+            else:
+                continue
+                
+            image_list = grouped_images.get(sym, [])
             if not image_list:
-                alt_list = list(files.files_filtered(imagetyp='LIGHT', filter=filt_alt))
-                if alt_list:
-                    image_list = alt_list
-                    filt = filt_alt
+                continue
 
-            log(f"Processing {len(image_list)} images for {filt} filter.")
+            log(f"Processing {len(image_list)} images for {sym} filter.")
 
             multiple_AP(
                 image_list=image_list,
                 path=images_path,
-                filt=filt,
+                filt=sym,
                 pipeline=pipeline,
                 obj_name=obj_name,
                 radec_file=radec_file,
@@ -98,6 +179,7 @@ def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=N
 
     except Exception as e:
         log(f"An error occurred in Multi-Aperture Photometry: {e}")
+        raise
 
 
 def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file="",

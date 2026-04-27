@@ -291,14 +291,16 @@ def test_main_cancels_before_processing():
 def test_main_logs_error_on_bad_path():
     from EclipsingBinaries.multi_aperture_photometry import main
     from unittest.mock import MagicMock
+    import pytest
 
     cancel = MagicMock()
     cancel.is_set.return_value = False
     messages = []
 
-    main(path="/nonexistent/path/xyz", pipeline=True,
-         radec_list=["a.radec", "b.radec", "c.radec"],
-         obj_name="test", write_callback=messages.append, cancel_event=cancel)
+    with pytest.raises(Exception):
+        main(path="/nonexistent/path/xyz", pipeline=True,
+             radec_list=["a.radec", "b.radec", "c.radec"],
+             obj_name="test", write_callback=messages.append, cancel_event=cancel)
 
     assert any("error" in m.lower() for m in messages)
 
@@ -312,7 +314,10 @@ def test_main_processes_each_filter():
     messages = []
 
     mock_collection = MagicMock()
-    mock_collection.files_filtered.return_value = []
+    h1 = {"FILTER": "B"}
+    h2 = {"FILTER": "V"}
+    h3 = {"FILTER": "R"}
+    mock_collection.headers.return_value = [(h1, "img1.fits"), (h2, "img2.fits"), (h3, "img3.fits")]
 
     with patch("EclipsingBinaries.multi_aperture_photometry.ccdp.ImageFileCollection",
                return_value=mock_collection), \
@@ -326,13 +331,16 @@ def test_main_processes_each_filter():
 
 def test_main_passes_correct_filter_to_multiple_ap():
     from EclipsingBinaries.multi_aperture_photometry import main
-    from unittest.mock import MagicMock, patch, call
+    from unittest.mock import MagicMock, patch
 
     cancel = MagicMock()
     cancel.is_set.return_value = False
 
     mock_collection = MagicMock()
-    mock_collection.files_filtered.return_value = []
+    h1 = {"FILTER": "B"}
+    h2 = {"FILTER": "V"}
+    h3 = {"FILTER": "R"}
+    mock_collection.headers.return_value = [(h1, "img1.fits"), (h2, "img2.fits"), (h3, "img3.fits")]
 
     with patch("EclipsingBinaries.multi_aperture_photometry.ccdp.ImageFileCollection",
                return_value=mock_collection), \
@@ -342,9 +350,9 @@ def test_main_passes_correct_filter_to_multiple_ap():
              obj_name="test", write_callback=None, cancel_event=cancel)
 
     filters_used = [c.kwargs["filt"] for c in mock_ap.call_args_list]
-    assert "Empty/B" in filters_used
-    assert "Empty/V" in filters_used
-    assert "Empty/R" in filters_used
+    assert "B" in filters_used
+    assert "V" in filters_used
+    assert "R" in filters_used
 
 
 # ===========================================================================
