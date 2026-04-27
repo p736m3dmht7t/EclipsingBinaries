@@ -137,3 +137,50 @@ For a negative declination::
     Do not use the same folder for both ``INPUT_DIR`` and ``OUTPUT_DIR``. The reduction
     stage writes files to ``OUTPUT_DIR`` and monitoring ``INPUT_DIR`` for new files could
     behave unexpectedly if they overlap.
+
+Custom Filter Mapping
+---------------------
+
+If your telescope uses a filter naming convention different from the default ``Empty/B``, ``Empty/V``, or ``Empty/R`` in its FITS headers, you can provide a ``filter_config.json`` file to map them to the standard processing symbols (``B``, ``V``, ``R``). 
+
+.. note::
+    It is **not** necessary to add this configuration file if your images already conform to the default ``Empty/B`` or ``B`` naming convention (as well as ``V`` and ``R``). The script will automatically process standard filter names.
+
+If you do need custom mapping, the script will search for ``filter_config.json`` in the following order:
+
+1. The directory containing your ``.radec`` files
+2. Your current working directory
+3. Your home directory (e.g., ``~/.EclipsingBinaries/filter_config.json`` on Mac/Linux or ``C:\Users\<username>\.EclipsingBinaries\filter_config.json`` on Windows)
+
+**Example Configuration:**
+
+.. code-block:: json
+
+    {
+      "TELESCOPE": [
+        {
+          "name": "BSUO",
+          "identification": {
+            "fits_key": "OBSERVAT",
+            "match_value": "BSUO"
+          },
+          "filters": [
+            {
+              "name": "Johnson B",
+              "fits_key": "FILTER",
+              "match_value": "Custom_B",
+              "processing_symbol": "B"
+            },
+            {
+              "name": "Johnson V",
+              "fits_key": "FILTER",
+              "match_value": "Custom_V",
+              "processing_symbol": "V"
+            }
+          ]
+        }
+      ]
+    }
+
+.. warning::
+    When the Astropy library reads string values from a FITS header, it automatically strips all trailing spaces. If your FITS file has ``OBSERVAT= 'SFRO    '``, your ``match_value`` in the JSON file must be exactly ``"SFRO"`` without the spaces.
