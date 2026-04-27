@@ -331,7 +331,7 @@ def test_main_processes_each_filter():
 
 def test_main_passes_correct_filter_to_multiple_ap():
     from EclipsingBinaries.multi_aperture_photometry import main
-    from unittest.mock import MagicMock, patch, call
+    from unittest.mock import MagicMock, patch
 
     cancel = MagicMock()
     cancel.is_set.return_value = False

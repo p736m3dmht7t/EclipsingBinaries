@@ -31,7 +31,7 @@ warnings.filterwarnings("ignore", category=wcs.FITSFixedWarning)
 matplotlib.use('Agg')
 
 import json
-import os
+
 
 _config_loaded_attempted = False
 _loaded_config = None
@@ -58,8 +58,8 @@ def load_filter_config(radec_dir):
                     _loaded_config = json.load(f)
                 _config_path_used = str(p)
                 return _loaded_config, _config_path_used
-            except Exception:
-                pass
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                continue
     return None, None
 
 def resolve_filter(header, radec_dir=None, log=print):
