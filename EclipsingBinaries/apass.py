@@ -650,9 +650,12 @@ def create_radec(
             # Use safe filenames for case-insensitive filesystems (macOS/Windows)
             # to prevent R/r and I/i from overwriting each other
             safe_filt = filt
-            if filt == "g": safe_filt = "g_prime"
-            elif filt == "r": safe_filt = "r_prime"
-            elif filt == "i": safe_filt = "i_prime"
+            if filt == "g":
+                safe_filt = "g_prime"
+            elif filt == "r":
+                safe_filt = "r_prime"
+            elif filt == "i":
+                safe_filt = "i_prime"
             
             outputfile = os.path.join(folder_path, obj_name + "_" + safe_filt)
 
