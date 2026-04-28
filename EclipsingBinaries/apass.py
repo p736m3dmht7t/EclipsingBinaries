@@ -174,14 +174,14 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
                 # if there is a value then format that value with 3 decimal places for RADEC precision consistency
                 Rc.append(format(val_rc, ".3f"))
                 e_Rc.append(format(root_rc, ".3f"))
-                
+
             if isNaN(val_ic) is True:
                 Ic.append(99.999)
                 e_Ic.append(99.999)
             else:
                 Ic.append(format(val_ic, ".3f"))
                 e_Ic.append(format(root_ic, ".3f"))
-                
+
             count += 1
 
         ra_decimal = np.array([_to_decimal_coord(value) for value in ra], dtype=float)
@@ -646,7 +646,7 @@ def create_radec(
             lines = create_lines(ra_list, dec_list, mag_list, ra, dec, filt)
 
             output = header + lines
-            
+
             # Use safe filenames for case-insensitive filesystems (macOS/Windows)
             # to prevent R/r and I/i from overwriting each other
             safe_filt = filt
@@ -656,7 +656,7 @@ def create_radec(
                 safe_filt = "r_prime"
             elif filt == "i":
                 safe_filt = "i_prime"
-            
+
             outputfile = os.path.join(folder_path, obj_name + "_" + safe_filt)
 
             with open(outputfile + ".radec", "w") as file:
@@ -812,16 +812,16 @@ def calculations(B, V, g, r, i, e_B, e_V, e_g, e_r, e_i, count):
     div_e = np.abs(div) * np.sqrt((numerator_err / numerator) ** 2 + (e_beta / beta) ** 2)
 
     root_rc = np.sqrt(div_e ** 2 + float(e_V[count]) ** 2)
-    
+
     # predefined values DO NOT change.
     # See Rogers et al 2018, Improved Transformation Equations for Main Sequence Stars
     # See eqn (3):  https://arxiv.org/pdf/astro-ph/0609736
     delta = 1.000
     e_delta = 0.006
     epsilon = 0.212
-    
+
     val_ic = val_rc - (float(r[count]) - float(i[count]) + epsilon) / delta
-    
+
     e_ic_squared = root_rc ** 2 + (float(e_r[count]) ** 2 + float(e_i[count]) ** 2) / (delta ** 2) + \
                    (((float(r[count]) - float(i[count]) + epsilon) / (delta ** 2)) * e_delta) ** 2
     root_ic = np.sqrt(e_ic_squared)
