@@ -3,7 +3,7 @@ Combines all APASS programs that were originally separate on GitHub for an easy 
 
 Author: Kyle Koeller
 Created: 12/26/2022
-Last Updated: 04/19/2026
+Last Updated: 04/28/2026
 """
 
 from astroquery.vizier import Vizier
