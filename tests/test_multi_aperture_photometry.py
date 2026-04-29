@@ -389,3 +389,37 @@ def test_multiple_ap_cancels_during_loop():
         )
 
     assert any("cancel" in m.lower() for m in messages)
+
+
+# ===========================================================================
+# New Interactive Radii Optimization Tests
+# ===========================================================================
+def test_calculate_target_snr():
+    from EclipsingBinaries.multi_aperture_photometry import calculate_target_snr
+    from astropy.modeling import models
+    
+    yy, xx = np.mgrid[:100, :100]
+    g = models.Gaussian2D(amplitude=1000, x_mean=50, y_mean=50, x_stddev=2.0, y_stddev=2.0)
+    image = g(xx, yy) + 100 # Add background
+    
+    snr, flx, err, bkg = calculate_target_snr(image, (50, 50), 10, (15, 20), read_noise=5.0)
+    
+    assert snr > 0
+    assert flx > 0
+    assert err > 0
+    assert bkg == pytest.approx(100.0, rel=0.1)
+
+def test_auto_optimize_radii():
+    from EclipsingBinaries.multi_aperture_photometry import auto_optimize_radii
+    from astropy.modeling import models
+    
+    yy, xx = np.mgrid[:100, :100]
+    g = models.Gaussian2D(amplitude=1000, x_mean=50, y_mean=50, x_stddev=3.0, y_stddev=3.0)
+    image = g(xx, yy) + 100
+    
+    fwhm, best_ap, (best_in, best_out) = auto_optimize_radii(image, (50, 50))
+    
+    assert fwhm > 0
+    assert best_ap > 0
+    assert best_in > best_ap
+    assert best_out > best_in

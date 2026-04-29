@@ -62,6 +62,109 @@ def load_filter_config(radec_dir):
                 continue
     return None, None
 
+def calculate_target_snr(image_data, target_position, aperture_radius, annulus_radii, read_noise=10.83):
+    """
+    Calculate the Signal-to-Noise Ratio (SNR) for the target star.
+    """
+    target_aperture = CircularAperture(target_position, r=aperture_radius)
+    target_annulus = CircularAnnulus(target_position, *annulus_radii)
+    
+    target_phot_table = aperture_photometry(image_data, target_aperture)
+    target_aperture_sum = float(target_phot_table['aperture_sum'][0])
+    
+    target_bkg_mean = ApertureStats(image_data, target_annulus).mean
+    if np.isnan(target_bkg_mean) or np.isinf(target_bkg_mean):
+        target_bkg_mean = 0.0
+        
+    target_bkg = target_bkg_mean * target_aperture.area
+    target_flx = target_aperture_sum - float(target_bkg)
+    
+    target_flux_err = np.sqrt(target_aperture_sum + target_aperture.area * read_noise ** 2)
+    
+    if target_flux_err > 0:
+        snr = target_flx / target_flux_err
+    else:
+        snr = 0.0
+        
+    return snr, target_flx, target_flux_err, target_bkg_mean
+
+
+def auto_optimize_radii(image_data, target_position):
+    """
+    Auto-suggest optimized aperture and annulus radii based on FWHM and SNR maximization.
+    """
+    from astropy.modeling import models, fitting
+    
+    x, y = target_position
+    x_int, y_int = int(np.round(x)), int(np.round(y))
+    box_size = 20
+    
+    # Define cutout boundaries, ensuring they stay within the image
+    y_start = max(0, y_int - box_size)
+    y_end = min(image_data.shape[0], y_int + box_size)
+    x_start = max(0, x_int - box_size)
+    x_end = min(image_data.shape[1], x_int + box_size)
+    
+    cutout = image_data[y_start:y_end, x_start:x_end]
+    
+    # If the target is too close to the edge, return safe defaults
+    if cutout.size == 0:
+        return 4.0, 7.0, (12.0, 19.0)
+    
+    yy, xx = np.mgrid[:cutout.shape[0], :cutout.shape[1]]
+    
+    # Initialize the 2D Gaussian model
+    g_init = models.Gaussian2D(amplitude=np.max(cutout) - np.median(cutout), 
+                               x_mean=x_int - x_start, 
+                               y_mean=y_int - y_start, 
+                               x_stddev=2.0, 
+                               y_stddev=2.0)
+                               
+    fitter = fitting.LevMarLSQFitter()
+    g_fit = fitter(g_init, xx, yy, cutout - np.median(cutout))
+    
+    # Calculate FWHM
+    sigma = np.mean([g_fit.x_stddev.value, g_fit.y_stddev.value])
+    fwhm = 2.355 * sigma
+    
+    if fwhm <= 0 or np.isnan(fwhm):
+        fwhm = 4.0 # fallback
+        
+    # Starting guess based on FWHM
+    suggested_aperture = 1.75 * fwhm
+    suggested_inner = np.floor(3 * fwhm)
+    
+    # Target 10x area for the suggested outer annulus
+    ap_area = np.pi * suggested_aperture**2
+    ann_area = 10.0 * ap_area
+    suggested_outer = np.ceil(np.sqrt(ann_area / np.pi + suggested_inner**2))
+    
+    # Maximize SNR over a small range of aperture radii
+    best_snr = 0
+    best_aperture = suggested_aperture
+    
+    aperture_range = np.arange(max(1.0, fwhm), min(3 * fwhm, 30.0), 0.5)
+    
+    for ap in aperture_range:
+        # Dynamic constraints
+        inn = max(suggested_inner, ap + 1.0)
+        # Approximate outer to maintain 10x annulus area proportion
+        ann_area = 10.0 * np.pi * ap**2
+        out = np.sqrt(ann_area / np.pi + inn**2)
+        
+        snr, _, _, _ = calculate_target_snr(image_data, target_position, ap, (inn, out))
+        if snr > best_snr:
+            best_snr = snr
+            best_aperture = ap
+            
+    # Calculate final suggested annulus radii based on best aperture
+    best_inner = max(np.floor(3 * fwhm), best_aperture + 1.0)
+    best_aperture_area = np.pi * best_aperture**2
+    suggested_annulus_area = 2 * best_aperture_area
+    best_outer = np.ceil(np.sqrt(suggested_annulus_area / np.pi + best_inner**2))
+
+    return fwhm, best_aperture, (best_inner, best_outer)
+
 def resolve_filter(header, radec_dir=None, log=print):
     global _config_log_printed
     filt_candidates = {
@@ -102,7 +205,8 @@ def resolve_filter(header, radec_dir=None, log=print):
                     
     return filter_val
 
-def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=None, cancel_event=None):
+def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=None, cancel_event=None,
+         aperture_radius=20, annulus_radii=(30, 50)):
     """
     Entry point for multi-aperture photometry. Iterates over each filter and its
     corresponding RADEC file, dispatching to multiple_AP for the actual photometry.
@@ -174,7 +278,9 @@ def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=N
                 obj_name=obj_name,
                 radec_file=radec_file,
                 write_callback=write_callback,
-                cancel_event=cancel_event
+                cancel_event=cancel_event,
+                aperture_radius=aperture_radius,
+                annulus_radii=annulus_radii
             )
 
     except Exception as e:
@@ -183,7 +289,7 @@ def main(path="", pipeline=False, radec_list=None, obj_name="", write_callback=N
 
 
 def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file="",
-                write_callback=None, cancel_event=None):
+                write_callback=None, cancel_event=None, aperture_radius=20, annulus_radii=(30, 50)):
     """
     Perform aperture photometry on all images for a single filter. Comparison stars
     that fall outside the image bounds are automatically removed and the process
@@ -226,10 +332,6 @@ def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file=
     if cancel_event and cancel_event.is_set():
         log("Task canceled during photometry.")
         return
-
-    # Aperture and annulus sizes in pixels
-    aperture_radius = 20
-    annulus_radii = (30, 50)
 
     # Read noise from the detector, used in flux error calculations
     read_noise = 10.83  # electrons, sourced from FITS headers
@@ -392,7 +494,8 @@ def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file=
                 # ---------------------------------------------------------------------------
                 # Perform aperture photometry for the target star
                 # ---------------------------------------------------------------------------
-                target_phot_table = aperture_photometry(image_data, target_aperture)
+                target_snr, target_flx, target_flux_err, target_bkg_mean = calculate_target_snr(
+                    image_data, target_position, aperture_radius, annulus_radii, read_noise)
 
                 # ---------------------------------------------------------------------------
                 # Perform aperture photometry for each comparison star individually so
@@ -404,14 +507,6 @@ def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file=
                         aperture_photometry(image_data, comp_ap),
                         aperture_photometry(image_data, comp_an)
                     ))
-
-                # ---------------------------------------------------------------------------
-                # Estimate the sky background for the target star via annulus statistics.
-                # Fall back to zero if the mean is non-finite (e.g. star near the edge).
-                # ---------------------------------------------------------------------------
-                target_bkg_mean = ApertureStats(image_data, target_annulus).mean
-                if np.isnan(target_bkg_mean) or np.isinf(target_bkg_mean):
-                    target_bkg_mean = 0.0
 
                 # Estimate sky background for each comparison star in the same way
                 comparison_bkg_mean = []
@@ -427,14 +522,6 @@ def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file=
                 # astropy Table columns can carry shape metadata that causes ambiguous
                 # behaviour in downstream arithmetic if left as Column objects.
                 # ---------------------------------------------------------------------------
-
-                # Background-subtracted flux for the target
-                target_aperture_sum = float(target_phot_table['aperture_sum'][0])
-                target_bkg  = target_bkg_mean * target_aperture.area
-                target_flx  = target_aperture_sum - float(target_bkg)
-
-                # Poisson + read-noise flux error for the target
-                target_flux_err = np.sqrt(target_aperture_sum + target_aperture.area * read_noise ** 2)
 
                 # Background-subtracted flux for each comparison star
                 comparison_flx = [
@@ -484,11 +571,27 @@ def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file=
         # Plot the resulting light curve with error bars and save it to disk
         # ---------------------------------------------------------------------------
         _, ax = plt.subplots(figsize=(11, 8))
-        ax.errorbar(hjd, magnitudes, yerr=mag_err, fmt='o', label="Source_AMag_T1")
+        filter_letter = filt.split("/")[-1]
+        target_display_name = f"{obj_name} - {filter_letter}" if obj_name else f"Target - {filter_letter}"
+        
+        ax.errorbar(hjd, magnitudes, yerr=mag_err, fmt='o', label=target_display_name)
 
         fontsize = 14
+        if obj_name:
+            ax.set_title(target_display_name, fontsize=fontsize+2)
+            
         ax.set_xlabel('HJD', fontsize=fontsize)
-        ax.set_ylabel('Source_AMag_T1', fontsize=fontsize)
+        ax.set_ylabel(f'Magnitude ({filter_letter})', fontsize=fontsize)
+        
+        # Format HJD offset as an integer instead of scientific notation
+        from matplotlib.ticker import ScalarFormatter
+        class IntOffsetFormatter(ScalarFormatter):
+            def get_offset(self):
+                if len(self.locs) == 0 or self.offset == 0:
+                    return ''
+                return f"+{int(self.offset)}"
+                
+        ax.xaxis.set_major_formatter(IntOffsetFormatter(useOffset=True))
         ax.invert_yaxis()  # Magnitudes increase downward by convention
         ax.grid()
         ax.legend(loc="upper right", fontsize=fontsize).set_draggable(True)

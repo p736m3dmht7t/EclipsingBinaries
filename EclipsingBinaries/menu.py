@@ -20,11 +20,15 @@ from tkinterdnd2 import TkinterDnD, DND_FILES
 from astropy.nddata import CCDData
 from astroquery.mast import Tesscut
 from matplotlib import pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import numpy as np
+from astropy.io import fits
+from photutils.aperture import CircularAperture, CircularAnnulus
 
 from .IRAF_Reduction import run_reduction
 from .tess_data_search import run_tess_search
 from .apass import comparison_selector
-from .multi_aperture_photometry import main as multi_ap
+from .multi_aperture_photometry import main as multi_ap, auto_optimize_radii, calculate_target_snr
 from .OC_plot import BSUO, TESS_OC, all_data, data_fit
 from .gaia import target_star as gaia
 from .OConnell import main as oconnell
@@ -820,8 +824,30 @@ class ProgramLauncher(TkinterDnD.Tk):
                                                error_message="Please enter a file pathway with file name.",
                                                browse_type="file")
 
+        # Radii fields
+        self.aperture_radius_var = self.create_input_field(self.right_frame, "Aperture Radius (px):",
+                                                           "20", row=6,
+                                                           validation_func=lambda x: x.isdigit() or x.replace('.', '', 1).isdigit(),
+                                                           error_message="Please enter a numeric radius.")
+        
+        self.annulus_inner_var = self.create_input_field(self.right_frame, "Inner Annulus Radius (px):",
+                                                         "30", row=7,
+                                                         validation_func=lambda x: x.isdigit() or x.replace('.', '', 1).isdigit(),
+                                                         error_message="Please enter a numeric inner radius.")
+
+        self.annulus_outer_var = self.create_input_field(self.right_frame, "Outer Annulus Radius (px):",
+                                                         "50", row=8,
+                                                         validation_func=lambda x: x.isdigit() or x.replace('.', '', 1).isdigit(),
+                                                         error_message="Please enter a numeric outer radius.")
+
+        # Optimize Radii Button
+        Button(self.right_frame, text="Optimize Radii", font=self.button_font, bg="#003366", fg="white",
+               command=lambda: self.run_radii_optimizer(reduced_images_path, radec_b_file, radec_v_file, radec_r_file)).grid(
+            row=9, column=0, columnspan=2, pady=10, sticky=""
+        )
+
         # Run button
-        self.create_run_button(self.right_frame, self.run_multi_aperture_photometry, row=6,
+        self.create_run_button(self.right_frame, self.run_multi_aperture_photometry, row=10,
                                obj_name=obj_name,
                                reduced_images_path=reduced_images_path,
                                radec_b_file=radec_b_file,
@@ -830,11 +856,11 @@ class ProgramLauncher(TkinterDnD.Tk):
 
         # Log display area
         tk.Label(self.right_frame, text="Output Log:", font=self.label_font, bg="#ffffff").grid(
-            row=7, column=0, columnspan=2, pady=5
+            row=11, column=0, columnspan=2, pady=5
         )
 
         # Create scrollbar for the log area
-        self.create_scrollbar_and_log(8)
+        self.create_scrollbar_and_log(12)
     
     
     def show_oc_plot(self):
@@ -1326,6 +1352,11 @@ class ProgramLauncher(TkinterDnD.Tk):
                 radec_b_path = radec_b_file.get().strip()
                 radec_v_path = radec_v_file.get().strip()
                 radec_r_path = radec_r_file.get().strip()
+                
+                aperture_radius = float(self.aperture_radius_var.get().strip())
+                annulus_inner = float(self.annulus_inner_var.get().strip())
+                annulus_outer = float(self.annulus_outer_var.get().strip())
+                annulus_radii = (annulus_inner, annulus_outer)
 
                 # Validate inputs
                 if not reduced_path_value:
@@ -1347,7 +1378,9 @@ class ProgramLauncher(TkinterDnD.Tk):
                     path=reduced_path_value, pipeline=False,
                     radec_list=[radec_b_path, radec_v_path, radec_r_path],
                     obj_name=obj_name_value,
-                    write_callback=self.write_to_log, cancel_event=self.cancel_event
+                    write_callback=self.write_to_log, cancel_event=self.cancel_event,
+                    aperture_radius=aperture_radius,
+                    annulus_radii=annulus_radii
                 )
 
                 if not self.cancel_event.is_set():
@@ -1361,7 +1394,187 @@ class ProgramLauncher(TkinterDnD.Tk):
 
         # Run the photometry task in a separate thread
         self.run_task(photometry_task)
-    
+
+    def run_radii_optimizer(self, reduced_images_path, radec_b_file, radec_v_file, radec_r_file):
+        """Interactive Radii Optimizer using the first image and RADEC target."""
+        
+        reduced_path = reduced_images_path.get().strip()
+        
+        # Pick the first provided RADEC file
+        radec_file = None
+        for f in [radec_b_file, radec_v_file, radec_r_file]:
+            if f.get().strip():
+                radec_file = f.get().strip()
+                break
+                
+        if not reduced_path or not radec_file:
+            self.write_to_log("Error: Reduced Images Path and at least one RADEC file are required for optimization.")
+            return
+            
+        try:
+            import pandas as pd
+            from pathlib import Path
+            import ccdproc as ccdp
+            from astropy.wcs import WCS
+            from astropy.coordinates import SkyCoord
+            import astropy.units as u
+            
+            # Load first image
+            images_path = Path(reduced_path)
+            if not images_path.exists():
+                self.write_to_log("Error: Reduced Images Path does not exist.")
+                return
+                
+            files = ccdp.ImageFileCollection(images_path)
+            light_files = files.files_filtered(imagetyp='LIGHT')
+            if len(light_files) == 0:
+                self.write_to_log("Error: No LIGHT images found in the given path.")
+                return
+                
+            first_image_path = images_path / light_files[0]
+            image_data, header = fits.getdata(first_image_path, header=True)
+            
+            # Read target from RADEC
+            df = pd.read_csv(radec_file, skiprows=7, sep=",", header=None)
+            target_ra = df[0].values[0]
+            target_dec = df[1].values[0]
+            
+            wcs_ = WCS(header)
+            if ":" in str(target_ra):
+                target_sky = SkyCoord(target_ra, target_dec, unit=(u.hourangle, u.deg), frame='icrs')
+            else:
+                target_sky = SkyCoord(target_ra, target_dec, unit=(u.deg, u.deg), frame='icrs')
+            
+            target_pixel = wcs_.world_to_pixel(target_sky)
+            target_position = (float(target_pixel[0]), float(target_pixel[1]))
+            
+            # Get FWHM and optimized radii
+            fwhm, best_aperture, (best_inner, best_outer) = auto_optimize_radii(image_data, target_position)
+            
+            # Setup interactive window
+            opt_window = tk.Toplevel(self)
+            opt_window.title("Interactive Radii Optimizer")
+            opt_window.geometry("800x600")
+            
+            # Matplotlib figure setup
+            fig, ax = plt.subplots(figsize=(5, 5))
+            
+            # Crop image around target
+            x_int, y_int = int(np.round(target_position[0])), int(np.round(target_position[1]))
+            box_size = 50
+            y_start = max(0, y_int - box_size)
+            y_end = min(image_data.shape[0], y_int + box_size)
+            x_start = max(0, x_int - box_size)
+            x_end = min(image_data.shape[1], x_int + box_size)
+            
+            cutout = image_data[y_start:y_end, x_start:x_end]
+            
+            im = ax.imshow(cutout, cmap='gray', origin='lower',
+                           vmin=np.percentile(cutout, 5), vmax=np.percentile(cutout, 95))
+                           
+            # Aperture shapes relative to cutout center
+            rel_target_position = (target_position[0] - x_start, target_position[1] - y_start)
+            
+            canvas = FigureCanvasTkAgg(fig, master=opt_window)
+            canvas.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            
+            # Controls
+            controls_frame = tk.Frame(opt_window, padx=10, pady=10)
+            controls_frame.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            tk.Label(controls_frame, text=f"Estimated FWHM: {fwhm:.2f} px", font=("Helvetica", 12, "bold")).pack(pady=10)
+            
+            snr_label = tk.Label(controls_frame, text="SNR: Calculating...", font=("Helvetica", 12, "bold"))
+            snr_label.pack(pady=10)
+            
+            area_factor_label = tk.Label(controls_frame, text="Annulus Area: --x Aperture Area", font=("Helvetica", 11))
+            area_factor_label.pack(pady=5)
+            
+            def update_snr(*args):
+                ap = float(ap_slider.get())
+                inn = float(inn_slider.get())
+                width = float(width_slider.get())
+                
+                # Dynamic constraints
+                if inn <= ap:
+                    inn = ap + 0.1
+                    inn_slider.set(inn)
+                    
+                out = inn + width
+                
+                # Update area factor guide
+                ap_area = np.pi * ap**2
+                ann_area = np.pi * (out**2 - inn**2)
+                area_factor = ann_area / ap_area if ap_area > 0 else 0
+                area_factor_label.config(text=f"Annulus Area: {area_factor:.1f}x Aperture Area")
+                
+                # Recalculate SNR
+                try:
+                    snr, _, _, _ = calculate_target_snr(image_data, target_position, ap, (inn, out))
+                    snr_label.config(text=f"SNR: {snr:.2f}")
+                except Exception:
+                    pass
+                
+                # Update plot
+                for p in list(ax.patches):
+                    p.remove()
+                CircularAperture(rel_target_position, r=ap).plot(color='red', lw=1.5, ax=ax)
+                CircularAnnulus(rel_target_position, inn, out).plot(color='green', lw=1.5, ax=ax)
+                canvas.draw()
+            
+            # Aperture slider
+            ap_max = max(5.0, float(np.ceil(3 * fwhm)))
+            tk.Label(controls_frame, text="Aperture Radius (px):").pack()
+            ap_slider = tk.Scale(controls_frame, from_=1.0, to=ap_max, orient=tk.HORIZONTAL, resolution=0.1, command=update_snr)
+            ap_slider.set(round(best_aperture, 1))
+            ap_slider.pack(fill=tk.X, pady=5)
+            
+            # Inner Annulus slider
+            inn_min = float(np.floor(3 * fwhm))
+            inn_max = float(np.ceil(5 * fwhm))
+            tk.Label(controls_frame, text="Inner Annulus Radius (px):").pack()
+            inn_slider = tk.Scale(controls_frame, from_=inn_min, to=inn_max, orient=tk.HORIZONTAL, resolution=0.1, command=update_snr)
+            inn_slider.set(round(best_inner, 1))
+            inn_slider.pack(fill=tk.X, pady=5)
+            
+            # Annulus Width slider
+            def get_width_for_area(factor, ap, inn):
+                return np.sqrt((factor * np.pi * ap**2) / np.pi + inn**2) - inn
+                
+            width_min = max(1.0, float(np.floor(get_width_for_area(5.0, best_aperture, best_inner))))
+            width_max = max(width_min + 1.0, float(np.ceil(get_width_for_area(25.0, best_aperture, best_inner))))
+            
+            tk.Label(controls_frame, text="Annulus Width (px):").pack()
+            width_slider = tk.Scale(controls_frame, from_=width_min, to=width_max, orient=tk.HORIZONTAL, resolution=0.1, command=update_snr)
+            initial_width = best_outer - best_inner
+            width_slider.set(round(initial_width, 1))
+            width_slider.pack(fill=tk.X, pady=5)
+            
+            def save_and_close():
+                ap = float(ap_slider.get())
+                inn = float(inn_slider.get())
+                width = float(width_slider.get())
+                out = inn + width
+                
+                self.aperture_radius_var.delete(0, tk.END)
+                self.aperture_radius_var.insert(0, str(round(ap, 1)))
+                self.annulus_inner_var.delete(0, tk.END)
+                self.annulus_inner_var.insert(0, str(round(inn, 1)))
+                self.annulus_outer_var.delete(0, tk.END)
+                self.annulus_outer_var.insert(0, str(round(out, 1)))
+                
+                self.write_to_log(f"Optimization complete. Saved Aperture: {round(ap, 1)}, Inner: {round(inn, 1)}, Outer: {round(out, 1)}")
+                opt_window.destroy()
+                
+            Button(controls_frame, text="Save & Close", command=save_and_close).pack(pady=20)
+            
+            # Trigger initial update
+            update_snr()
+
+        except Exception as e:
+            self.write_to_log(f"Error launching interactive optimizer: {e}")
+            self.write_to_log(traceback.format_exc())
+            
     
     def run_oc_plot(self):
         """Collect inputs and pass them to OC_plot functions in a background thread."""
