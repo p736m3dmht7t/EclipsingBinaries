@@ -61,9 +61,7 @@ def load_filter_config(radec_dir):
     return None, None
 
 def calculate_target_snr(image_data, target_position, aperture_radius, annulus_radii, read_noise=10.83):
-    """
-    Calculate the Signal-to-Noise Ratio (SNR) for the target star.
-    """
+    """Calculate the Signal-to-Noise Ratio (SNR) for the target star."""
     target_aperture = CircularAperture(target_position, r=aperture_radius)
     target_annulus = CircularAnnulus(target_position, *annulus_radii)
 
