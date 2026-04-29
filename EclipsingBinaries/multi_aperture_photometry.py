@@ -88,9 +88,7 @@ def calculate_target_snr(image_data, target_position, aperture_radius, annulus_r
 
 
 def auto_optimize_radii(image_data, target_position):
-    """
-    Auto-suggest optimized aperture and annulus radii based on FWHM and SNR maximization.
-    """
+    """Auto-suggest optimized aperture and annulus radii based on FWHM and SNR maximization."""
     from astropy.modeling import models, fitting
 
     x, y = target_position
@@ -489,7 +487,7 @@ def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file=
                 # ---------------------------------------------------------------------------
                 # Perform aperture photometry for the target star
                 # ---------------------------------------------------------------------------
-                target_snr, target_flx, target_flux_err, target_bkg_mean = calculate_target_snr(
+                _, target_flx, target_flux_err, target_bkg_mean = calculate_target_snr(
                     image_data, target_position, aperture_radius, annulus_radii, read_noise)
 
                 # ---------------------------------------------------------------------------
