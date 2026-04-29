@@ -3,7 +3,7 @@ Combines all APASS programs that were originally separate on GitHub for an easy 
 
 Author: Kyle Koeller
 Created: 12/26/2022
-Last Updated: 04/19/2026
+Last Updated: 04/28/2026
 """
 
 from astroquery.vizier import Vizier
@@ -136,13 +136,6 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
             log("Task canceled before starting.")
             return
 
-        # predefined values DO NOT change
-        alpha = 0.278
-        e_alpha = 0.016
-        beta = 1.321
-        e_beta = 0.03
-        gamma = 0.219
-
         input_file, input_ra, input_dec, input_ra_text, input_dec_text = catalog_finder(
             ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_event
         )
@@ -159,24 +152,36 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
         e_g = df[7]
         r = df[8]
         e_r = df[9]
+        i = df[10]
+        e_i = df[11]
 
         Rc = []
         e_Rc = []
+        Ic = []
+        e_Ic = []
         count = 0
 
         # loop that goes through each value in B to get the total amount of values to be calculated
-        log("Calculating Cousins R filter values.")
-        for i in B:
-            root, val = calculations(i, V, g, r, gamma, beta, e_beta, alpha, e_alpha, e_B, e_V, e_g, e_r, count)
-            if isNaN(val) is True:
+        log("Calculating Cousins R and I filter values.")
+        for _ in B:
+            root_rc, val_rc, root_ic, val_ic = calculations(B, V, g, r, i, e_B, e_V, e_g, e_r, e_i, count)
+            if isNaN(val_rc) is True:
                 # if the value is nan then append 99.999 to the R_c value and its error to make it obvious that there is
                 # no given value
                 Rc.append(99.999)
                 e_Rc.append(99.999)
             else:
                 # if there is a value then format that value with 3 decimal places for RADEC precision consistency
-                Rc.append(format(val, ".3f"))
-                e_Rc.append(format(root, ".3f"))
+                Rc.append(format(val_rc, ".3f"))
+                e_Rc.append(format(root_rc, ".3f"))
+
+            if isNaN(val_ic) is True:
+                Ic.append(99.999)
+                e_Ic.append(99.999)
+            else:
+                Ic.append(format(val_ic, ".3f"))
+                e_Ic.append(format(root_ic, ".3f"))
+
             count += 1
 
         ra_decimal = np.array([_to_decimal_coord(value) for value in ra], dtype=float)
@@ -196,11 +201,19 @@ def cousins_r(ra, dec, pipeline, folder_path, obj_name, write_callback, cancel_e
             "e_VMag": e_V,
             "Rc": Rc,
             "e_Rc": e_Rc,
+            "Ic": Ic,
+            "e_Ic": e_Ic,
+            "g": g,
+            "e_g": e_g,
+            "r": r,
+            "e_r": e_r,
+            "i": i,
+            "e_i": e_i,
             "TMag": T_list,
             "e_TMag": T_err_list
         })
 
-        output_file = os.path.join(folder_path, "APASS_" + obj_name + "_Rc.txt")
+        output_file = os.path.join(folder_path, "APASS_" + obj_name + "_Rc_Ic.txt")
         # noinspection PyTypeChecker
         final.to_csv(output_file, index=True, sep="\t")
         log("Completed Cousins R calculations.")
@@ -237,7 +250,7 @@ def query_vizier(ra_input, dec_input, write_callback, cancel_event):
         # Query Vizier here and return result
         result = Vizier(
             columns=['_RAJ2000', '_DEJ2000', 'Vmag', "e_Vmag", 'Bmag', "e_Bmag", "g'mag", "e_g'mag", "r'mag",
-                     "e_r'mag"],
+                     "e_r'mag", "i'mag", "e_i'mag"],
             row_limit=-1,
             column_filters=({"Vmag": "<14", "Bmag": "<14"})).query_region(
             coord.SkyCoord(ra=ra_input, dec=dec_input, unit=(u.h, u.deg), frame="icrs"),
@@ -276,10 +289,12 @@ def process_data(vizier_result):
     e_gmag = []
     rmag = []
     e_rmag = []
+    imag = []
+    e_imag = []
 
     one = 0
     # pastes all variables into a list for future use
-    for i in range(0, len(table_list) - 1):
+    for _ in range(0, len(table_list) - 1):
         two = 0
         ra.append(table_list[one][two])
         dec.append(table_list[one][two + 1])
@@ -291,6 +306,8 @@ def process_data(vizier_result):
         e_gmag.append(table_list[one][two + 7])
         rmag.append(table_list[one][two + 8])
         e_rmag.append(table_list[one][two + 9])
+        imag.append(table_list[one][two + 10])
+        e_imag.append(table_list[one][two + 11])
 
         one += 1
 
@@ -310,6 +327,8 @@ def process_data(vizier_result):
     e_gmag_new = _format_decimal_list(e_gmag, 3)
     rmag_new = _format_decimal_list(rmag, 3)
     e_rmag_new = _format_decimal_list(e_rmag, 3)
+    imag_new = _format_decimal_list(imag, 3)
+    e_imag_new = _format_decimal_list(e_imag, 3)
 
     # places all lists into a DataFrame to paste into a text file for comparison star finder
     df = pd.DataFrame({
@@ -322,7 +341,9 @@ def process_data(vizier_result):
         "g'mag": gmag_new,
         "e_g'mag": e_gmag_new,
         "r'mag": rmag_new,
-        "e_r'mag": e_rmag_new
+        "e_r'mag": e_rmag_new,
+        "i'mag": imag_new,
+        "e_i'mag": e_imag_new
     })
 
     return df
@@ -601,8 +622,8 @@ def create_radec(
         if cancel_event.is_set():
             log("Task canceled.")
             return
-        filters = ["B", "V", "R", "T"]
-        mag_cols = [3, 5, 7, T_list]
+        filters = ["B", "V", "R", "I", "g", "r", "i", "T"]
+        mag_cols = [3, 5, 7, 9, 11, 13, 15, T_list]
 
         ra_list = df[1]
         dec_list = df[2]
@@ -625,14 +646,25 @@ def create_radec(
             lines = create_lines(ra_list, dec_list, mag_list, ra, dec, filt)
 
             output = header + lines
-            outputfile = os.path.join(folder_path, obj_name + "_" + filt)
+
+            # Use safe filenames for case-insensitive filesystems (macOS/Windows)
+            # to prevent R/r and I/i from overwriting each other
+            safe_filt = filt
+            if filt == "g":
+                safe_filt = "g_prime"
+            elif filt == "r":
+                safe_filt = "r_prime"
+            elif filt == "i":
+                safe_filt = "i_prime"
+
+            outputfile = os.path.join(folder_path, obj_name + "_" + safe_filt)
 
             with open(outputfile + ".radec", "w") as file:
                 file.write(output)
 
             file_list.append(outputfile + ".radec")
 
-        log("Finished writing RADEC files for Johnson B, Johnson V, Cousins R, and TESS magnitudes.")
+        log("Finished writing RADEC files for Johnson B, Johnson V, Cousins R, Cousins I, g', r', i', and TESS magnitudes.")
 
         return file_list
     except Exception as e:
@@ -740,42 +772,61 @@ def overlay(df, tar_ra, tar_dec, fits_file, folder_path: str = "", obj_name: str
 
 
 @jit(forceobj=True)
-def calculations(i, V, g, r, gamma, beta, e_beta, alpha, e_alpha, e_B, e_V, e_g, e_r, count):
+def calculations(B, V, g, r, i, e_B, e_V, e_g, e_r, e_i, count):
     """
     Calculates (O-C) values
 
-    :param i: i' mag
+    :param B: Johnson B magnitude
     :param V: Johnson V magnitude
     :param g: g' mag
     :param r: r' mag
-    :param gamma: coefficient from paper
-    :param beta: coefficient from paper
-    :param e_beta: error of beta
-    :param alpha: coefficient from paper
-    :param e_alpha: error of alpha
+    :param i: i' mag
     :param e_B: error of Johnson B mag
     :param e_V: error of Johnson V mag
     :param e_g: error of g' mag
     :param e_r: error of r' mag
+    :param e_i: error of i' mag
     :param count: the number that the iteration is on to pick the correct values from lists
 
-    :return: root, val - mag and error respectively
+    :return: root_rc, val_rc, root_ic, val_ic - mag and error respectively for Rc and Ic
     """
+    # predefined values DO NOT change.
+    # See Rogers et al 2018, Improved Transformation Equations for Main Sequence Stars
+    # See eqn (2):  https://arxiv.org/pdf/astro-ph/0609736
+    alpha = 0.278
+    e_alpha = 0.016
+    beta = 1.321
+    e_beta = 0.03
+    gamma = 0.219
+
     # separates the equation out into more easily readable sections
-    numerator = alpha * (float(i) - float(V[count])) - gamma - float(g[count]) + float(r[count])
+    numerator = alpha * (float(B[count]) - float(V[count])) - gamma - float(g[count]) + float(r[count])
     div = numerator / beta
-    val = float(V[count]) + div
+    val_rc = float(V[count]) + div
 
     b_v_err = np.sqrt(float(e_B[count]) ** 2 + float(e_V[count]) ** 2)
-    b_v_alpha_err = np.abs(alpha * (float(i) - float(V[count]))) * np.sqrt(
-        (e_alpha / alpha) ** 2 + (b_v_err / (float(i) - float(V[count]))) ** 2)
+    b_v_alpha_err = np.abs(alpha * (float(B[count]) - float(V[count]))) * np.sqrt(
+        (e_alpha / alpha) ** 2 + (b_v_err / (float(B[count]) - float(V[count]))) ** 2)
 
     numerator_err = np.sqrt(b_v_alpha_err ** 2 + float(e_g[count]) ** 2 + float(e_r[count]) ** 2)
     div_e = np.abs(div) * np.sqrt((numerator_err / numerator) ** 2 + (e_beta / beta) ** 2)
 
-    root = np.sqrt(div_e ** 2 + float(e_V[count]) ** 2)
+    root_rc = np.sqrt(div_e ** 2 + float(e_V[count]) ** 2)
 
-    return root, val
+    # predefined values DO NOT change.
+    # See Rogers et al 2018, Improved Transformation Equations for Main Sequence Stars
+    # See eqn (3):  https://arxiv.org/pdf/astro-ph/0609736
+    delta = 1.000
+    e_delta = 0.006
+    epsilon = 0.212
+
+    val_ic = val_rc - (float(r[count]) - float(i[count]) + epsilon) / delta
+
+    e_ic_squared = root_rc ** 2 + (float(e_r[count]) ** 2 + float(e_i[count]) ** 2) / (delta ** 2) + \
+                   (((float(r[count]) - float(i[count]) + epsilon) / (delta ** 2)) * e_delta) ** 2
+    root_ic = np.sqrt(e_ic_squared)
+
+    return root_rc, val_rc, root_ic, val_ic
 
 
 def angle_dist(x1, y1, x2, y2):
