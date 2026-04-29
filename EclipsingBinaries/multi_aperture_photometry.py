@@ -487,7 +487,7 @@ def multiple_AP(image_list, path, filt, pipeline=False, obj_name="", radec_file=
                 # ---------------------------------------------------------------------------
                 # Perform aperture photometry for the target star
                 # ---------------------------------------------------------------------------
-                _, target_flx, target_flux_err, target_bkg_mean = calculate_target_snr(
+                _, target_flx, target_flux_err, _ = calculate_target_snr(
                     image_data, target_position, aperture_radius, annulus_radii, read_noise)
 
                 # ---------------------------------------------------------------------------
