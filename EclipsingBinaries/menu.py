@@ -1466,8 +1466,8 @@ class ProgramLauncher(TkinterDnD.Tk):
 
             cutout = image_data[y_start:y_end, x_start:x_end]
 
-            im = ax.imshow(cutout, cmap='gray', origin='lower',
-                           vmin=np.percentile(cutout, 5), vmax=np.percentile(cutout, 95))
+            ax.imshow(cutout, cmap='gray', origin='lower',
+                      vmin=np.percentile(cutout, 5), vmax=np.percentile(cutout, 95))
 
             # Aperture shapes relative to cutout center
             rel_target_position = (target_position[0] - x_start, target_position[1] - y_start)

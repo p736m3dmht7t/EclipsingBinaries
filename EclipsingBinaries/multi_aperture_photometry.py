@@ -22,6 +22,7 @@ from astropy.io import fits
 from photutils.aperture import CircularAperture, CircularAnnulus, aperture_photometry, ApertureStats
 from astropy.wcs import WCS
 import astropy.units as u
+import json
 from astropy import wcs
 
 # Suppress FITS header standards-compliance warnings that are not actionable
@@ -29,9 +30,6 @@ warnings.filterwarnings("ignore", category=wcs.FITSFixedWarning)
 
 # Use non-interactive backend so plots can be saved without a display
 matplotlib.use('Agg')
-
-import json
-
 
 _config_loaded_attempted = False
 _loaded_config = None
